@@ -4,16 +4,31 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 
+# 1. Konfiguracja strony
 st.set_page_config(page_title="Manufaktura - Degustacja", layout="centered", initial_sidebar_state="collapsed")
 
-# Zaawansowany CSS - Motyw Grafit/Marmur + Glassmorphism
+# 2. Zaawansowany CSS - Motyw Grafit/Marmur + Glassmorphism + Wymuszenie jasnych czcionek
 st.markdown("""
 <style>
+    /* Tło - ciemny marmur/grafit */
     .stApp {
         background: linear-gradient(135deg, #1e1e1e 0%, #2d3238 100%);
-        color: #f1f2f6;
     }
+    
+    /* Wymuszenie jasnego koloru tekstu dla wszystkich etykiet, pytań, opcji i opisów pomocy */
+    p, label, span, div[data-baseweb="radio"], .st-emotion-cache-1629p8f {
+        color: #f1f2f6 !important;
+    }
+    
+    /* Jasne nagłówki */
+    h1, h2, h3 {
+        color: #ffffff !important;
+    }
+    
+    /* Ukrycie domyślnego nagłówka Streamlit */
     header {visibility: hidden;}
+    
+    /* Półprzezroczyste karty dla sekcji (Glassmorphism) */
     .block-container {
         padding-top: 2rem;
     }
@@ -27,18 +42,23 @@ st.markdown("""
         box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
         transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
     }
+    
+    /* Animacje Hover i podświetlenie kart */
     div[data-testid="stVerticalBlock"] > div:hover {
         border-color: rgba(255, 255, 255, 0.2);
         box-shadow: 0 8px 32px rgba(255, 255, 255, 0.15);
     }
+    
+    /* Przycisk wysyłania (Glow) */
     button[kind="primary"] {
         background: linear-gradient(90deg, #4b6cb7 0%, #182848 100%);
         border: 1px solid rgba(255, 255, 255, 0.2);
         border-radius: 12px;
-        color: white;
+        color: white !important;
         font-weight: bold;
         transition: all 0.3s ease;
     }
+    
     button[kind="primary"]:hover {
         box-shadow: 0 0 15px rgba(75, 108, 183, 0.6);
         border-color: rgba(255, 255, 255, 0.5);
@@ -46,45 +66,49 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- KONFIGURACJA GOOGLE SHEETS ---
+# 3. Konfiguracja połączenia z Arkuszem Google
 ID_ARKUSZA = "1Ze654cGGS7qVwYRXhJjM8_Tj3oEBCUaFfDEWnkktdS4"
 
 @st.cache_resource
 def init_connection():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    # Ścieżka do sekretów (musi być skonfigurowana w Streamlit Cloud lub lokalnie w .streamlit/secrets.toml)
+    # Zabezpieczenia ładowane ze st.secrets (np. ze Streamlit Cloud)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
     client = gspread.authorize(creds)
     return client
 
 client = init_connection()
 
-@st.cache_data(ttl=60) # Odświeża bazę pytań co 60 sekund
+# 4. Pobieranie bazy pytań (Odświeżanie co 60 sekund)
+@st.cache_data(ttl=60)
 def pobierz_pytania():
     sheet = client.open_by_key(ID_ARKUSZA).worksheet("Baza_Pytan")
     return pd.DataFrame(sheet.get_all_records())
 
-# --- INTERFEJS APLIKACJI ---
+# 5. Interfejs Aplikacji
 st.title("🌭 Panel Degustacyjny")
 st.markdown("Oceń szczerze, to pomoże nam dopracować recepturę!")
 
 probka = st.radio("Którą próbkę oceniasz?", ("Próbka A", "Próbka B", "Próbka C"), horizontal=True)
 
 try:
+    # Wczytujemy strukturę pytań z Arkusza
     pytania_df = pobierz_pytania()
     odpowiedzi_usera = []
     
     st.header("Ocena parametrów")
     
-    # Automatyczne generowanie suwaków na podstawie danych z Arkusza
+    # Automatyczne generowanie suwaków
     for index, row in pytania_df.iterrows():
+        # Pobieranie danych z komórek (z zabezpieczeniem w razie pustej komórki)
         min_val = int(row.get('Min_Wartosc', 1))
         max_val = int(row.get('Max_Wartosc', 5))
+        
         wartosc = st.slider(
-            label=str(row.get('Tresc_Pytania', 'Pytanie')),
+            label=str(row.get('Tresc_Pytania', 'Pytanie bez nazwy')),
             min_value=min_val,
             max_value=max_val,
-            value=min_val + (max_val - min_val) // 2, # Ustawia domyślnie na środek
+            value=min_val + (max_val - min_val) // 2, # Ustawia wskaźnik domyślnie na środku
             help=str(row.get('Opis_Pomocniczy', ''))
         )
         odpowiedzi_usera.append(wartosc)
@@ -92,17 +116,19 @@ try:
     st.header("Podsumowanie")
     komentarz = st.text_area("Co byś zmienił/a? (Opcjonalnie)")
 
+    # 6. Zapisywanie danych
     if st.button("Wyślij ocenę 🚀", type="primary", use_container_width=True):
-        # Budujemy wiersz do wysłania
-        nowy_wiersz = [
-            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            probka
-        ] + odpowiedzi_usera + [komentarz]
+        with st.spinner("Zapisywanie w chmurze..."):
+            # Pakujemy cały wiersz (Data, Próbka, Odpowiedzi z suwaków, Komentarz)
+            nowy_wiersz = [
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                probka
+            ] + odpowiedzi_usera + [komentarz]
 
-        # Zapis do Arkusza
-        sheet_odpowiedzi = client.open_by_key(ID_ARKUSZA).worksheet("Odpowiedzi")
-        sheet_odpowiedzi.append_row(nowy_wiersz)
-        
+            # Łączymy się z drugą zakładką i dopisujemy wiersz
+            sheet_odpowiedzi = client.open_by_key(ID_ARKUSZA).worksheet("Odpowiedzi")
+            sheet_odpowiedzi.append_row(nowy_wiersz)
+            
         st.success("Dane zapisane! Możesz popić wodą i wziąć kolejny kawałek.")
 
 except Exception as e:
